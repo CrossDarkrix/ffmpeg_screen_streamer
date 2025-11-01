@@ -2,8 +2,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
-
 import soundcard
 import soundfile
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
@@ -12,7 +10,6 @@ from PySide6.QtGui import (QIcon,
                            QImage, QPixmap)
 from PySide6.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton,
                                QMainWindow)
-
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -50,6 +47,7 @@ class Ui_ScreenSS(object):
         self.check = True
         self.thread = None
         self.thread2 = None
+        self.ffmpeg = None
 
         self.retranslateUi(ScreenSS)
 
@@ -62,16 +60,6 @@ class Ui_ScreenSS(object):
         self.target_label.setText('対象iP')
         self.start_btn.setText('開始')
     # retranslateUi
-
-    def get_audio(self):
-        while True:
-            with soundcard.get_microphone(id='{}'.format(soundcard.default_speaker().name), include_loopback=True).recorder(samplerate=44100) as f:
-                soundfile.write(os.path.join(os.path.expanduser('~'), 'tmp.wav'), data=f.record(48000), samplerate=44100)
-
-    def process(self, ip):
-        if ip != '':
-            time.sleep(3)
-            subprocess.run('ffmpeg -stream_loop -13 -f wav -i {} -video_size 1920x1080 -f gdigrab -i desktop -rtbufsize 100M -vcodec libx264 -preset ultrafast -tune zerolatency -acodec aac -f mpegts udp://{}:1889'.format(os.path.join(os.path.expanduser('~'), 'tmp.wav'), ip), shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def check_text_format(self, text):
         if text != '':
@@ -87,16 +75,27 @@ class Ui_ScreenSS(object):
         if self.check:
             self.check = False
             self.start_btn.setText('ストップ')
-            self.thread = threading.Thread(target=self.process, daemon=True, args=(self.check_text_format(self.target_ip.text()), ))
-            self.thread2 = threading.Thread(target=self.get_audio, daemon=True)
-            self.thread.start()
+            ffmpeg = subprocess.Popen(
+                ['ffmpeg.exe', '-f', 'wav', '-i', 'pipe:0', '-video_size', '1920x1080', '-f', 'gdigrab', '-i',
+                 'desktop', '-rtbufsize', '500M', '-framerate', '25', '-vcodec', 'libx264', '-acodec', 'aac', '-ar',
+                 '44100', '-b:a', '128k', '-f', 'mpegts',
+                 'udp://{}:1889'.format(self.check_text_format(self.target_ip.text()))], stdin=subprocess.PIPE)
+            def _thread():
+                while True:
+                    if os.path.exists(os.path.join(os.path.expanduser('~'), 'tmp.wav')):
+                        with open(os.path.join(os.path.expanduser('~'), 'tmp.wav'), 'rb') as fb:
+                            data = fb.read()
+                            if data:
+                                ffmpeg.stdin.write(data)
+                                ffmpeg.stdin.flush()
+                    with soundcard.get_microphone(id='{}'.format(soundcard.default_speaker().name), include_loopback=True).recorder(samplerate=48000, channels=2) as f:
+                        soundfile.write(os.path.join(os.path.expanduser('~'), 'tmp.wav'), data=f.record(44100), samplerate=48000)
+            self.thread2 = threading.Thread(target=_thread, daemon=True)
             self.thread2.start()
         else:
             self.check = True
             subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            # os.remove(os.path.join(os.path.expanduser('~'), 'tmp.wav'))
             self.start_btn.setText('開始')
-            self.thread.join(0)
             self.thread2.join(0)
 
 def main():
