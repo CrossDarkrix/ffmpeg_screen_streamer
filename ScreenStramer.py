@@ -1,111 +1,88 @@
-import os
-import subprocess
+import time
 import sys
+import subprocess
 import threading
-import soundcard
-import soundfile
-from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
-                            QSize, Qt)
-from PySide6.QtGui import (QIcon,
-                           QImage, QPixmap)
-from PySide6.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton,
-                               QMainWindow)
+import soundcard as sc
+import numpy as np
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QLineEdit
+from PySide6.QtCore import QRect
 
-class MainWindow(QMainWindow):
-    def __init__(self, parent=None):
-        super(MainWindow, self).__init__(parent)
-        self.setAcceptDrops(True)
-        self.setWindowIcon(QIcon(QPixmap(QSize(96, 96)).fromImage(QImage(os.path.join(os.getcwd(), 'icons', 'icon.png')))))
+class ScreenStreamer(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Screen Streamer")
+        self.setGeometry(200, 200, 400, 200)
+        self.label = QLabel("対象IP", self)
+        self.label.setGeometry(QRect(20, 40, 80, 30))
+        self.ip_input = QLineEdit(self)
+        self.ip_input.setGeometry(QRect(100, 40, 260, 30))
+        self.start_btn = QPushButton("開始", self)
+        self.start_btn.setGeometry(QRect(20, 100, 340, 60))
+        self.start_btn.clicked.connect(self.toggle_stream)
 
-    def closeEvent(self, event, /):
-        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if os.path.exists(os.path.join(os.path.expanduser('~'), 'tmp.wav')):
-            os.remove(os.path.join(os.path.expanduser('~'), 'tmp.wav'))
-
-class Ui_ScreenSS(object):
-    def setupUi(self, ScreenSS):
-        if not ScreenSS.objectName():
-            ScreenSS.setObjectName(u"ScreenSS")
-        ScreenSS.resize(387, 267)
-        self.ttile = QLabel(ScreenSS)
-        self.ttile.setObjectName(u"ttile")
-        self.ttile.setGeometry(QRect(50, 40, 271, 41))
-        self.ttile.setTextFormat(Qt.TextFormat.PlainText)
-        self.ttile.setScaledContents(False)
-        self.ttile.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.target_ip = QLineEdit(ScreenSS)
-        self.target_ip.setObjectName(u"target_ip")
-        self.target_ip.setGeometry(QRect(100, 100, 281, 41))
-        self.target_label = QLabel(ScreenSS)
-        self.target_label.setObjectName(u"target_label")
-        self.target_label.setGeometry(QRect(0, 106, 101, 31))
-        self.target_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.start_btn = QPushButton(ScreenSS)
-        self.start_btn.setObjectName(u"start_btn")
-        self.start_btn.clicked.connect(self.start)
-        self.start_btn.setGeometry(QRect(20, 180, 351, 61))
-        self.check = True
-        self.thread = None
-        self.thread2 = None
         self.ffmpeg = None
+        self.thread = None
+        self.running = False
 
-        self.retranslateUi(ScreenSS)
-
-        QMetaObject.connectSlotsByName(ScreenSS)
-    # setupUi
-
-    def retranslateUi(self, ScreenSS):
-        ScreenSS.setWindowTitle('Screen Streamer')
-        self.ttile.setText(QCoreApplication.translate("ScreenSS", u"Screen Streamer", None))
-        self.target_label.setText('対象iP')
-        self.start_btn.setText('開始')
-    # retranslateUi
-
-    def check_text_format(self, text):
-        if text != '':
-            if 'udp://' == text[0:6]:
-                text = text.replace(text[0:6], '')
-            if ':' in text:
-                text = text.split(':')[0]
-            return text
+    def toggle_stream(self):
+        if not self.running:
+            self.running = True
+            self.start_btn.setText("ストップ")
+            self.start_stream()
         else:
-            return ''
+            self.running = False
+            self.start_btn.setText("開始")
+            subprocess.run('taskkill /f /im ffmpeg.exe', shell=True)
 
-    def start(self):
-        if self.check:
-            self.check = False
-            self.start_btn.setText('ストップ')
-            ffmpeg = subprocess.Popen(
-                ['ffmpeg.exe', '-f', 'wav', '-i', 'pipe:0', '-video_size', '1920x1080', '-f', 'gdigrab', '-i',
-                 'desktop', '-rtbufsize', '500M', '-framerate', '25', '-vcodec', 'libx264', '-acodec', 'aac', '-ar',
-                 '44100', '-b:a', '128k', '-f', 'mpegts',
-                 'udp://{}:1889'.format(self.check_text_format(self.target_ip.text()))], stdin=subprocess.PIPE)
-            def _thread():
-                while True:
-                    if os.path.exists(os.path.join(os.path.expanduser('~'), 'tmp.wav')):
-                        with open(os.path.join(os.path.expanduser('~'), 'tmp.wav'), 'rb') as fb:
-                            data = fb.read()
-                            if data:
-                                ffmpeg.stdin.write(data)
-                                ffmpeg.stdin.flush()
-                    with soundcard.get_microphone(id='{}'.format(soundcard.default_speaker().name), include_loopback=True).recorder(samplerate=48000, channels=2) as f:
-                        soundfile.write(os.path.join(os.path.expanduser('~'), 'tmp.wav'), data=f.record(44100), samplerate=48000)
-            self.thread2 = threading.Thread(target=_thread, daemon=True)
-            self.thread2.start()
-        else:
-            self.check = True
-            subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.start_btn.setText('開始')
-            self.thread2.join(0)
+    def start_stream(self):
+        target_ip = self.ip_input.text().strip()
+        if target_ip.startswith("udp://"):
+            target_ip = target_ip[6:]
+        if ":" in target_ip:
+            target_ip = target_ip.split(":")[0]
+        if not target_ip:
+            target_ip = "localhost"
+
+        # ffmpeg 起動
+        self.ffmpeg = subprocess.Popen([
+            "ffmpeg", "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+            "-fflags", "nobuffer", "-flags", "low_delay",
+            "-flush_packets", "1",
+            "-f", "gdigrab", "-framerate", "60", "-video_size", "1920x1080", "-i", "desktop",
+            "-vcodec", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-acodec", "aac", "-ar", "44100", "-b:a", "128k",
+            "-f", "avi", f"udp://{target_ip}:1889"
+        ], stdin=subprocess.PIPE, shell=True)
+
+        def audio_thread():
+            mic = sc.get_microphone(id=sc.default_speaker().name, include_loopback=True)
+            with mic.recorder(samplerate=44100, channels=2) as rec:
+                while self.running:
+                    data = rec.record(numframes=44100)  # 約1秒分
+                    # float32 → int16 WAVデータ化
+                    pcm16 = np.int16(data * 32767).tobytes()
+                    try:
+                        self.ffmpeg.stdin.write(pcm16)
+                        self.ffmpeg.stdin.flush()
+                    except Exception as e:
+                        print(f"[ERROR] ffmpeg write: {e}")
+                        break
+                    # 書き込み過多を防ぐ
+                    # time.sleep(0.08)
+
+        self.thread = threading.Thread(target=audio_thread, daemon=True)
+        self.thread.start()
+
+    def closeEvent(self, event):
+        self.running = False
+        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True)
+        event.accept()
 
 def main():
     app = QApplication(sys.argv)
-    main_win = MainWindow()
-    ui = Ui_ScreenSS()
-    ui.setupUi(main_win)
-    main_win.setFixedSize(main_win.size())
-    main_win.show()
-    app.exec()
+    win = ScreenStreamer()
+    win.show()
+    sys.exit(app.exec())
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
