@@ -1,11 +1,13 @@
-import time
-import sys
+import concurrent.futures
+import os
 import subprocess
-import threading
-import soundcard as sc
+import sys
+
 import numpy as np
-from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QLineEdit
+import soundcard as sc
 from PySide6.QtCore import QRect
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QLineEdit
+
 
 class ScreenStreamer(QMainWindow):
     def __init__(self):
@@ -21,7 +23,6 @@ class ScreenStreamer(QMainWindow):
         self.start_btn.clicked.connect(self.toggle_stream)
 
         self.ffmpeg = None
-        self.thread = None
         self.running = False
 
     def toggle_stream(self):
@@ -43,7 +44,6 @@ class ScreenStreamer(QMainWindow):
         if not target_ip:
             target_ip = "localhost"
 
-        # ffmpeg 起動
         self.ffmpeg = subprocess.Popen([
             "ffmpeg", "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
             "-fflags", "nobuffer", "-flags", "low_delay",
@@ -58,8 +58,7 @@ class ScreenStreamer(QMainWindow):
             mic = sc.get_microphone(id=sc.default_speaker().name, include_loopback=True)
             with mic.recorder(samplerate=44100, channels=2) as rec:
                 while self.running:
-                    data = rec.record(numframes=44100)  # 約1秒分
-                    # float32 → int16 WAVデータ化
+                    data = rec.record(numframes=44100)
                     pcm16 = np.int16(data * 32767).tobytes()
                     try:
                         self.ffmpeg.stdin.write(pcm16)
@@ -67,11 +66,8 @@ class ScreenStreamer(QMainWindow):
                     except Exception as e:
                         print(f"[ERROR] ffmpeg write: {e}")
                         break
-                    # 書き込み過多を防ぐ
-                    # time.sleep(0.08)
 
-        self.thread = threading.Thread(target=audio_thread, daemon=True)
-        self.thread.start()
+        concurrent.futures.ThreadPoolExecutor(os.cpu_count() * 999999).submit(audio_thread)
 
     def closeEvent(self, event):
         self.running = False
