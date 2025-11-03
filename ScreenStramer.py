@@ -67,14 +67,14 @@ class Ui_ScreenSS(object):
 
             # FFmpeg起動
             self.ffmpeg = subprocess.Popen([
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "ffmpeg", "-hide_banner", "-loglevel", "error", 
                 "-fflags", "nobuffer", "-flags", "low_delay", "-rtbufsize", "100M",
-                "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+                "-f", "s16le", "-threads", "350", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
                 "-f", "gdigrab", "-framerate", "30", "-video_size", "1920x1080", "-i", "desktop",
                 "-vcodec", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
                 "-acodec", "aac", "-b:a", "256k",
                 "-f", "mpegts", f"udp://{target_ip}:1889"
-            ], stdin=subprocess.PIPE)
+            ], stdin=subprocess.PIPE, shell=True)
             # 音声スレッド開始
             self.running = True
             self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
