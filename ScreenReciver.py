@@ -61,16 +61,17 @@ class Ui_ScreenSS(object):
             self.running = False
             if self.ffmpeg:
                 self.ffmpeg.stdin.close()
-                if platform.system() == 'Windows':
-                    subprocess.run('taskkill /f /im ffplay.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                else:
-                    subprocess.run('killall -9 ffplay', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                self.ffmpeg = None
+            if platform.system() == 'Windows':
+                subprocess.run('taskkill /f /im ffplay.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            else:
+                subprocess.run('killall -9 ffplay', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.ffmpeg = None
             self.start_btn.setText("開始")
+            self.audio_thread.kill()
             print("🛑 ストリーム停止")
 
     def stream_audio(self):
-        subprocess.run('ffplay -fflags nobuffer -flags low_delay -framedrop -sync ext "udp://localhost:1889"', shell=True)
+        subprocess.run('ffplay -fflags nobuffer -flags low_delay -framedrop -sync ext -analyzeduration 0 -probesize 32 "udp://0.0.0.0:1889"')
 
 def main():
     app = QApplication(sys.argv)
