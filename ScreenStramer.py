@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(QPixmap(QSize(96, 96)).fromImage(QImage(icon_path))))
 
     def closeEvent(self, event):
-        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 class Ui_ScreenSS(object):
     def setupUi(self, ScreenSS):
@@ -113,12 +113,11 @@ class Ui_ScreenSS(object):
 
     def restart_relay(self):
         if self.ffmpeg_relay:
+            self.ffmpeg_relay.terminate()
             try:
-                self.ffmpeg_relay.terminate()
+                self.ffmpeg_relay.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 self.ffmpeg_relay.kill()
-            except:
-                pass
-            time.sleep(1)
         if self.running:
             self.start_relay()
 
