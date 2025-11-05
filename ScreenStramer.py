@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 import threading
-
+import time
 import numpy as np
 import soundcard as sc
 from PySide6.QtCore import Qt, QRect, QMetaObject, QSize
@@ -25,73 +25,120 @@ class Ui_ScreenSS(object):
     def setupUi(self, ScreenSS):
         if not ScreenSS.objectName():
             ScreenSS.setObjectName(u"ScreenSS")
-        ScreenSS.resize(387, 267)
+        ScreenSS.resize(400, 260)
 
-        self.ttile = QLabel(ScreenSS)
-        self.ttile.setGeometry(QRect(50, 40, 271, 41))
-        self.ttile.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.ttile.setText("Screen Streamer")
-
-        self.target_label = QLabel(ScreenSS)
-        self.target_label.setGeometry(QRect(0, 106, 101, 31))
-        self.target_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.target_label.setText("対象IP")
+        self.title = QLabel(ScreenSS)
+        self.title.setGeometry(QRect(60, 40, 271, 41))
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.target_ip = QLineEdit(ScreenSS)
         self.target_ip.setGeometry(QRect(100, 100, 281, 41))
 
+        self.target_label = QLabel(ScreenSS)
+        self.target_label.setGeometry(QRect(10, 106, 91, 31))
+        self.target_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.start_btn = QPushButton(ScreenSS)
         self.start_btn.setGeometry(QRect(20, 180, 351, 61))
-        self.start_btn.setText("開始")
-        self.start_btn.clicked.connect(self.start)
+        self.start_btn.clicked.connect(self.start_or_stop)
 
-        self.ffmpeg = None
-        self.audio_thread = None
         self.running = False
+        self.ffmpeg = None
+        self._relay = None
+        self.ffmpeg_relay = None
+        self.relay_timer_thread = None
 
+        self.retranslateUi(ScreenSS)
         QMetaObject.connectSlotsByName(ScreenSS)
 
-    def clean_ip(self, text):
+    def retranslateUi(self, ScreenSS):
+        ScreenSS.setWindowTitle("Screen Streamer (Relay + Auto Restart)")
+        self.title.setText("Screen Streamer")
+        self.target_label.setText("対象IP")
+        self.start_btn.setText("▶ 開始")
+
+    def check_text_format(self, text):
+        if not text:
+            return ""
         if text.startswith("udp://"):
             text = text[6:]
         if ":" in text:
             text = text.split(":")[0]
-        return text
+        return text.strip()
 
-    def start(self):
+    def start_or_stop(self):
         if not self.running:
-            target_ip = self.clean_ip(self.target_ip.text())
-            if not target_ip:
-                print("Error: IPが入力されていません。")
-                return
-
-            # FFmpeg起動
-            self.ffmpeg = subprocess.Popen([
-                "ffmpeg", "-hide_banner", "-loglevel", "error", 
-                "-fflags", "nobuffer", "-flags", "low_delay", "-rtbufsize", "100M",
-                "-f", "s16le", "-threads", "350", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
-                "-f", "gdigrab", "-framerate", "30", "-video_size", "1920x1080", "-i", "desktop",
-                "-vcodec", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-                "-acodec", "aac", "-b:a", "256k",
-                "-f", "mpegts", f"udp://{target_ip}:1889"
-            ], stdin=subprocess.PIPE, shell=True)
-            # 音声スレッド開始
-            self.running = True
-            self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
-            self.audio_thread.start()
-
-            self.start_btn.setText("ストップ")
-            print(f"🎥 ストリーム開始: udp://{target_ip}:1889")
-
+            self.start_stream()
         else:
-            # 停止処理
-            self.running = False
-            if self.ffmpeg:
-                self.ffmpeg.stdin.close()
-                subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                self.ffmpeg = None
-            self.start_btn.setText("開始")
-            print("🛑 ストリーム停止")
+            self.stop_stream()
+
+    # ==== ストリーム開始 ====
+    def start_stream(self):
+        self.running = True
+        self.start_btn.setText("⛔ 停止")
+
+        # --- 送信側 ffmpeg ---
+        self.ffmpeg = subprocess.Popen([
+                "ffmpeg", "-hide_banner", "-loglevel", "error",  "-max_delay", "100000",
+                "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+                "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",  "-preset", "ultrafast", "-tune", "zerolatency",
+                "-f", "mpegts", "tcp://127.0.0.1:5000"
+            ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+
+        self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
+        self.audio_thread.start()
+        self.relay_timer_thread = threading.Thread(target=self.relay_auto_restart, daemon=True)
+        self.relay_timer_thread.start()
+
+
+    # ==== リレー起動 ====
+    def start_relay(self):
+        target_ip = self.check_text_format(self.target_ip.text())
+        self.ffmpeg_relay = subprocess.call(
+            [
+                "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1",
+                "-c", "copy", "-video_size", "1920x1080", "-framerate", "60", "-flags", "low_delay",
+                "-preset", "ultrafast", "-tune", "zerolatency", "-vcodec", "libx264", "-acodec",
+                "aac", "-b:a", "128k", "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
+            ],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
+        )
+
+    # ==== リレー自動再起動 ====
+    def relay_auto_restart(self):
+        while self.running:
+            self.restart_relay()
+            time.sleep(60 * 45)  # 45分
+            if not self.running:
+                break
+            
+
+    def restart_relay(self):
+        if self.ffmpeg_relay:
+            if self._relay:
+                self._relay.join(0)
+                try:
+                    if self.ffmpeg_relay:
+                        self.ffmpeg_relay.stdin.write(b'q')
+                        self.ffmpeg_relay.stdin.flush()
+                        time.sleep(3)
+                except:
+                    pass
+                try:
+                    self.ffmpeg_relay.kill()
+                except:
+                    pass
+                time.sleep(1)
+        if self.running:
+            self.start_relay()
+
+    # ==== ストリーム停止 ====
+    def stop_stream(self):
+        self.running = False
+        self.ffmpeg = None
+        self.ffmpeg_relay = None
+        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.start_btn.setText("▶ 開始")
 
     def stream_audio(self):
         try:
@@ -109,12 +156,7 @@ class Ui_ScreenSS(object):
                         break
         except Exception as e:
             print(f"[AudioThread Error] {e}")
-        finally:
-            if self.ffmpeg:
-                try:
-                    self.ffmpeg.stdin.close()
-                except Exception:
-                    pass
+
 
 def main():
     app = QApplication(sys.argv)
