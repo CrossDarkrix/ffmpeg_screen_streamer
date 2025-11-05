@@ -44,7 +44,6 @@ class Ui_ScreenSS(object):
 
         self.running = False
         self.ffmpeg = None
-        self._relay = None
         self.ffmpeg_relay = None
         self.relay_timer_thread = None
 
@@ -82,10 +81,9 @@ class Ui_ScreenSS(object):
                 "ffmpeg", "-hide_banner", "-loglevel", "error",  "-max_delay", "100000",
                 "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
                 "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",  "-preset", "ultrafast", "-tune", "zerolatency",
-                "-f", "mpegts", "tcp://127.0.0.1:5000"
+                "-vf", "scale=1920:1080:flags=lanczos", "-f", "mpeg", "tcp://127.0.0.1:5000"
             ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-        self._relay = threading.Thread(target=self.start_relay, daemon=True)
-        self._relay.start()
+        threading.Thread(target=self.start_relay, daemon=True).start()
         self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
         self.audio_thread.start()
         self.relay_timer_thread = threading.Thread(target=self.relay_auto_restart, daemon=True)
@@ -98,9 +96,9 @@ class Ui_ScreenSS(object):
         self.ffmpeg_relay = subprocess.Popen(
             [
                 "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1",
-                "-c", "copy", "-video_size", "1920x1080", "-framerate", "60", "-flags", "low_delay",
-                "-preset", "ultrafast", "-tune", "zerolatency", "-vcodec", "libx264", "-acodec",
-                "aac", "-b:a", "128k", "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
+                "-c", "copy", "-flags", "low_delay",
+                "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
+                "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
             ],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
         )
@@ -112,27 +110,17 @@ class Ui_ScreenSS(object):
             if not self.running:
                 break
             self.restart_relay()
-            
 
     def restart_relay(self):
         if self.ffmpeg_relay:
-            if self._relay:
-                self._relay.join(0)
-                try:
-                    if self.ffmpeg_relay:
-                        self.ffmpeg_relay.stdin.write(b'q')
-                        self.ffmpeg_relay.stdin.flush()
-                        time.sleep(3)
-                except:
-                    pass
-                try:
-                    self.ffmpeg_relay.kill()
-                except:
-                    pass
-                time.sleep(1)
+            try:
+                self.ffmpeg_relay.terminate()
+                self.ffmpeg_relay.kill()
+            except:
+                pass
+            time.sleep(1)
         if self.running:
-            self._relay = threading.Thread(target=self.start_relay, daemon=True)
-            self._relay.start()
+            self.start_relay()
 
     # ==== ストリーム停止 ====
     def stop_stream(self):
