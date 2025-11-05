@@ -84,7 +84,8 @@ class Ui_ScreenSS(object):
                 "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",  "-preset", "ultrafast", "-tune", "zerolatency",
                 "-f", "mpegts", "tcp://127.0.0.1:5000"
             ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-
+        self._relay = threading.Thread(target=self.start_relay, daemon=True)
+        self._relay.start()
         self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
         self.audio_thread.start()
         self.relay_timer_thread = threading.Thread(target=self.relay_auto_restart, daemon=True)
@@ -94,7 +95,7 @@ class Ui_ScreenSS(object):
     # ==== リレー起動 ====
     def start_relay(self):
         target_ip = self.check_text_format(self.target_ip.text())
-        self.ffmpeg_relay = subprocess.call(
+        self.ffmpeg_relay = subprocess.Popen(
             [
                 "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1",
                 "-c", "copy", "-video_size", "1920x1080", "-framerate", "60", "-flags", "low_delay",
@@ -107,10 +108,10 @@ class Ui_ScreenSS(object):
     # ==== リレー自動再起動 ====
     def relay_auto_restart(self):
         while self.running:
-            self.restart_relay()
             time.sleep(60 * 45)  # 45分
             if not self.running:
                 break
+            self.restart_relay()
             
 
     def restart_relay(self):
@@ -130,7 +131,8 @@ class Ui_ScreenSS(object):
                     pass
                 time.sleep(1)
         if self.running:
-            self.start_relay()
+            self._relay = threading.Thread(target=self.start_relay, daemon=True)
+            self._relay.start()
 
     # ==== ストリーム停止 ====
     def stop_stream(self):
