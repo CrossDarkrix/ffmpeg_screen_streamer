@@ -78,10 +78,10 @@ class Ui_ScreenSS(object):
 
         # --- 送信側 ffmpeg ---
         self.ffmpeg = subprocess.Popen([
-                "ffmpeg", "-hide_banner", "-loglevel", "error",  "-max_delay", "100000",
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
                 "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
-                "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",  "-preset", "ultrafast", "-tune", "zerolatency",
-                "-vf", "scale=1920:1080:flags=lanczos", "-f", "mpeg", "tcp://127.0.0.1:5000"
+                "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop", "-preset", "ultrafast", "-tune", "zerolatency",
+                "-vf", "scale=1920:1080:flags=lanczos", "-vf", "hqdn3d=1.5:1.5:6:6", "-af", "afftdn=nf=-25", "-f", "mpegts", "tcp://127.0.0.1:5000"
             ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
         threading.Thread(target=self.start_relay, daemon=True).start()
         self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
@@ -95,10 +95,9 @@ class Ui_ScreenSS(object):
         target_ip = self.check_text_format(self.target_ip.text())
         self.ffmpeg_relay = subprocess.Popen(
             [
-                "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1",
-                "-c", "copy", "-flags", "low_delay",
-                "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
-                "-f", "mpeg", f"udp://{target_ip}:1889?pkt_size=1316"
+                "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1", "-framerate", "60", "-c", "copy",
+                "-flags", "low_delay", "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
+                "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
             ],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
         )
