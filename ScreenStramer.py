@@ -98,7 +98,7 @@ class Ui_ScreenSS(object):
                 "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1",
                 "-c", "copy", "-flags", "low_delay",
                 "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
-                "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
+                "-f", "mpeg", f"udp://{target_ip}:1889?pkt_size=1316"
             ],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
         )
