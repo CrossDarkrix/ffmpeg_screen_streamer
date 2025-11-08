@@ -1,4 +1,4 @@
-import concurrent.futures
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -123,8 +123,8 @@ class Ui_ScreenSS(object):
     # ==== リレー起動 ====
     def start_relay(self):
         target_ip = '{}'.format(self.check_text_format(self.target_ip.text()))
-        self.ffmpeg_relay = concurrent.futures.ProcessPoolExecutor(1)
-        self.ffmpeg_relay.submit(_ffmpeg_relay, target_ip)
+        self.ffmpeg_relay = multiprocessing.Process(target=_ffmpeg_relay, daemon=True, args=(target_ip))
+        self.ffmpeg_relay.start()
 
     # ==== リレー自動再起動 ====
     def relay_auto_restart(self):
@@ -136,10 +136,8 @@ class Ui_ScreenSS(object):
 
     def restart_relay(self):
         if self.ffmpeg_relay:
-            for p in self.ffmpeg_relay._processes.values():
-                process = psutil.Process(p.pid)
-                for pid in [pc.pid for pc in process.children(recursive=True)]:
-                    psutil.Process(pid).terminate()
+            for pid in [pc.pid for pc in psutil.Process(self.ffmpeg_relay.pid).children(recursive=True)]:
+                psutil.Process(pid).terminate()
         if running[0]:
             self.start_relay()
 
@@ -147,10 +145,8 @@ class Ui_ScreenSS(object):
     def stop_stream(self):
         running[0] = False
         if self.ffmpeg_relay:
-            for p in self.ffmpeg_relay._processes.values():
-                process = psutil.Process(p.pid)
-                for pid in [pc.pid for pc in process.children(recursive=True)]:
-                    psutil.Process(pid).terminate()
+            for pid in [pc.pid for pc in psutil.Process(self.ffmpeg_relay.pid).children(recursive=True)]:
+                psutil.Process(pid).terminate()
         self.ffmpeg = None
         self.ffmpeg_relay = None
         subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -167,4 +163,5 @@ def main():
     app.exec()
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     main()
