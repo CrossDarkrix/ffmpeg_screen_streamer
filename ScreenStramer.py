@@ -1,14 +1,51 @@
+import concurrent.futures
 import os
 import subprocess
 import sys
 import threading
 import time
 import numpy as np
+import psutil
 import soundcard as sc
 from PySide6.QtCore import Qt, QRect, QMetaObject, QSize
 from PySide6.QtGui import QIcon, QPixmap, QImage
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QMainWindow
 
+running = [False]
+
+def stream_audio():
+    try:
+        _ffmpeg = subprocess.Popen([
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+            "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop", "-framerate", "60", "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-vf", "scale=1920:1080:flags=lanczos", "-vf", "hqdn3d=1.5:1.5:6:6", "-af", "afftdn=nf=-25", "-f", "mpegts",
+            "tcp://127.0.0.1:5000"
+        ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+        mic = sc.get_microphone(id=sc.default_speaker().name, include_loopback=True)
+        samplerate = 44100
+        chunk = 4410  # 約0.1秒分
+
+        with mic.recorder(samplerate=samplerate, channels=2) as rec:
+            while running[0] and _ffmpeg and _ffmpeg.poll() is None:
+                data = rec.record(numframes=chunk)
+                pcm = np.int16(data * 32767).tobytes()
+                try:
+                    _ffmpeg.stdin.write(pcm)
+                except (BrokenPipeError, OSError):
+                    break
+    except Exception as e:
+        print(f"[AudioThread Error] {e}")
+
+
+def _ffmpeg_relay(ip):
+    subprocess.run([
+                "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1", "-framerate", "60", "-c", "copy",
+                "-flags", "low_delay", "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
+                "-f", "mpegts", f"udp://{ip}:1889?pkt_size=1316"
+            ],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -42,7 +79,7 @@ class Ui_ScreenSS(object):
         self.start_btn.setGeometry(QRect(20, 180, 351, 61))
         self.start_btn.clicked.connect(self.start_or_stop)
 
-        self.running = False
+        running[0] = False
         self.ffmpeg = None
         self.ffmpeg_relay = None
         self.relay_timer_thread = None
@@ -66,84 +103,58 @@ class Ui_ScreenSS(object):
         return text.strip()
 
     def start_or_stop(self):
-        if not self.running:
+        if not running[0]:
             self.start_stream()
         else:
             self.stop_stream()
 
     # ==== ストリーム開始 ====
     def start_stream(self):
-        self.running = True
+        running[0] = True
         self.start_btn.setText("⛔ 停止")
 
         # --- 送信側 ffmpeg ---
-        self.ffmpeg = subprocess.Popen([
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
-                "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop", "-preset", "ultrafast", "-tune", "zerolatency",
-                "-vf", "scale=1920:1080:flags=lanczos", "-vf", "hqdn3d=1.5:1.5:6:6", "-af", "afftdn=nf=-25", "-f", "mpegts", "tcp://127.0.0.1:5000"
-            ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+        self.ffmpeg = threading.Thread(target=stream_audio, daemon=True)
+        self.ffmpeg.start()
         threading.Thread(target=self.start_relay, daemon=True).start()
-        self.audio_thread = threading.Thread(target=self.stream_audio, daemon=True)
-        self.audio_thread.start()
         self.relay_timer_thread = threading.Thread(target=self.relay_auto_restart, daemon=True)
         self.relay_timer_thread.start()
 
-
     # ==== リレー起動 ====
     def start_relay(self):
-        target_ip = self.check_text_format(self.target_ip.text())
-        self.ffmpeg_relay = subprocess.Popen(
-            [
-                "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1", "-framerate", "60", "-c", "copy",
-                "-flags", "low_delay", "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
-                "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
-            ],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
-        )
+        target_ip = '{}'.format(self.check_text_format(self.target_ip.text()))
+        self.ffmpeg_relay = concurrent.futures.ProcessPoolExecutor(1)
+        self.ffmpeg_relay.submit(_ffmpeg_relay, target_ip)
 
     # ==== リレー自動再起動 ====
     def relay_auto_restart(self):
-        while self.running:
+        while running[0]:
             time.sleep(60 * 45)  # 45分
-            if not self.running:
+            if not running[0]:
                 break
             self.restart_relay()
 
     def restart_relay(self):
         if self.ffmpeg_relay:
-            self.ffmpeg_relay.terminate()
-            try:
-                self.ffmpeg_relay.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.ffmpeg_relay.kill()
-        if self.running:
+            for p in self.ffmpeg_relay._processes.values():
+                process = psutil.Process(p.pid)
+                for pid in [pc.pid for pc in process.children(recursive=True)]:
+                    psutil.Process(pid).terminate()
+        if running[0]:
             self.start_relay()
 
     # ==== ストリーム停止 ====
     def stop_stream(self):
-        self.running = False
+        running[0] = False
+        if self.ffmpeg_relay:
+            for p in self.ffmpeg_relay._processes.values():
+                process = psutil.Process(p.pid)
+                for pid in [pc.pid for pc in process.children(recursive=True)]:
+                    psutil.Process(pid).terminate()
         self.ffmpeg = None
         self.ffmpeg_relay = None
-        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.start_btn.setText("▶ 開始")
-
-    def stream_audio(self):
-        try:
-            mic = sc.get_microphone(id=sc.default_speaker().name, include_loopback=True)
-            samplerate = 44100
-            chunk = 4410  # 約0.1秒分
-
-            with mic.recorder(samplerate=samplerate, channels=2) as rec:
-                while self.running and self.ffmpeg and self.ffmpeg.poll() is None:
-                    data = rec.record(numframes=chunk)
-                    pcm = np.int16(data * 32767).tobytes()
-                    try:
-                        self.ffmpeg.stdin.write(pcm)
-                    except (BrokenPipeError, OSError):
-                        break
-        except Exception as e:
-            print(f"[AudioThread Error] {e}")
 
 
 def main():
