@@ -11,42 +11,69 @@ from PySide6.QtCore import Qt, QRect, QMetaObject, QSize
 from PySide6.QtGui import QIcon, QPixmap, QImage
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QMainWindow
 
-running = [False]
+running = [True]
+ffmpeg_proc = [None]
 
-def stream_audio():
-    try:
-        _ffmpeg = subprocess.Popen([
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
-            "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop", "-framerate", "60", "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-vf", "scale=1920:1080:flags=lanczos", "-vf", "hqdn3d=1.5:1.5:6:6", "-af", "afftdn=nf=-25", "-f", "mpegts",
-            "tcp://127.0.0.1:5000"
-        ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-        mic = sc.get_microphone(id=sc.default_speaker().name, include_loopback=True)
-        samplerate = 44100
-        chunk = 4410  # 約0.1秒分
 
-        with mic.recorder(samplerate=samplerate, channels=2) as rec:
-            while running[0] and _ffmpeg and _ffmpeg.poll() is None:
+def run_ffmpeg(target_ip):
+    """FFmpegプロセスを起動"""
+    proc = subprocess.Popen([
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+        "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",
+        "-framerate", "60", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-vf", "scale=1920:1080:flags=lanczos,hqdn3d=1.5:1.5:6:6",
+        "-af", "afftdn=nf=-25",
+        "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
+    ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    print(f"[FFmpeg] 起動: {target_ip}")
+    return proc
+
+
+def restart_ffmpeg(target_ip):
+    """FFmpegを強制停止して再起動"""
+    if ffmpeg_proc[0]:
+        try:
+            for pid in [ffmpeg_proc[0].pid] + [p.pid for p in psutil.Process(ffmpeg_proc[0].pid).children(recursive=True)]:
+                psutil.Process(pid).terminate()
+        except Exception:
+            pass
+    ffmpeg_proc[0] = run_ffmpeg(target_ip)
+
+
+def stream_audio(target_ip):
+    """ループバック音声を録音してFFmpegに渡す"""
+    mic = sc.get_microphone(id=sc.default_speaker().name, include_loopback=True)
+    samplerate = 44100
+    chunk = 4410  # 約0.1秒分
+
+    ffmpeg_proc[0] = run_ffmpeg(target_ip)
+
+    # 🔄 FFmpegを45分ごとに再起動
+    threading.Thread(target=ffmpeg_auto_restart, args=(target_ip,), daemon=True).start()
+
+    with mic.recorder(samplerate=samplerate, channels=2) as rec:
+        while running[0]:
+            try:
                 data = rec.record(numframes=chunk)
                 pcm = np.int16(data * 32767).tobytes()
-                try:
-                    _ffmpeg.stdin.write(pcm)
-                except (BrokenPipeError, OSError):
-                    break
-    except Exception as e:
-        print(f"[AudioThread Error] {e}")
+                if ffmpeg_proc[0] and ffmpeg_proc[0].poll() is None:
+                    ffmpeg_proc[0].stdin.write(pcm)
+            except (BrokenPipeError, OSError):
+                time.sleep(1)
 
 
-def _ffmpeg_relay(ip):
-    subprocess.run([
-                "ffmpeg", "-fflags", "nobuffer", "-i", "tcp://127.0.0.1:5000?listen=1", "-framerate", "60", "-c", "copy",
-                "-flags", "low_delay", "-preset", "ultrafast", "-tune", "zerolatency", "-b:a", "128k",
-                "-f", "mpegts", f"udp://{ip}:1889?pkt_size=1316"
-            ],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+def ffmpeg_auto_restart(target_ip):
+    """45分ごとにFFmpegを再起動"""
+    while running[0]:
+        time.sleep(60 * 45)
+        if running[0]:
+            print("[FFmpeg] 45分経過 → 再起動します")
+            restart_ffmpeg(target_ip)
 
+# ==========================================
+# GUI構成
+# ==========================================
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super(MainWindow, self).__init__(parent)
@@ -56,7 +83,9 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(QPixmap(QSize(96, 96)).fromImage(QImage(icon_path))))
 
     def closeEvent(self, event):
-        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 
 class Ui_ScreenSS(object):
     def setupUi(self, ScreenSS):
@@ -88,7 +117,7 @@ class Ui_ScreenSS(object):
         QMetaObject.connectSlotsByName(ScreenSS)
 
     def retranslateUi(self, ScreenSS):
-        ScreenSS.setWindowTitle("Screen Streamer (Relay + Auto Restart)")
+        ScreenSS.setWindowTitle("Screen Streamer (UDP LocalIP + Auto Restart)")
         self.title.setText("Screen Streamer")
         self.target_label.setText("対象IP")
         self.start_btn.setText("▶ 開始")
@@ -113,46 +142,20 @@ class Ui_ScreenSS(object):
         running[0] = True
         self.start_btn.setText("⛔ 停止")
 
-        # --- 送信側 ffmpeg ---
-        self.ffmpeg = threading.Thread(target=stream_audio, daemon=True)
-        self.ffmpeg.start()
-        threading.Thread(target=self.start_relay, daemon=True).start()
-        self.relay_timer_thread = threading.Thread(target=self.relay_auto_restart, daemon=True)
-        self.relay_timer_thread.start()
-
-    # ==== リレー起動 ====
-    def start_relay(self):
         target_ip = '{}'.format(self.check_text_format(self.target_ip.text()))
-        self.ffmpeg_relay = multiprocessing.Process(target=_ffmpeg_relay, daemon=True, args=(target_ip, ))
-        self.ffmpeg_relay.start()
+        self.ffmpeg_audio = threading.Thread(target=stream_audio, args=(target_ip,), daemon=True)
+        self.ffmpeg_audio.start()
 
-    # ==== リレー自動再起動 ====
-    def relay_auto_restart(self):
-        while running[0]:
-            time.sleep(60 * 45)  # 45分
-            if not running[0]:
-                break
-            self.restart_relay()
-
-    def restart_relay(self):
-        if self.ffmpeg_relay:
-            for pid in [pc.pid for pc in psutil.Process(self.ffmpeg_relay.pid).children(recursive=True)]:
-                psutil.Process(pid).terminate()
-        if running[0]:
-            self.start_relay()
-
-    # ==== ストリーム停止 ====
     def stop_stream(self):
         running[0] = False
-        if self.ffmpeg_relay:
-            for pid in [pc.pid for pc in psutil.Process(self.ffmpeg_relay.pid).children(recursive=True)]:
-                psutil.Process(pid).terminate()
         self.ffmpeg = None
-        self.ffmpeg_relay = None
         subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.start_btn.setText("▶ 開始")
 
 
+# ==========================================
+# アプリ起動
+# ==========================================
 def main():
     app = QApplication(sys.argv)
     main_win = MainWindow()
@@ -161,6 +164,7 @@ def main():
     main_win.setFixedSize(main_win.size())
     main_win.show()
     app.exec()
+
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
