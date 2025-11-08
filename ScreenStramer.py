@@ -123,7 +123,7 @@ class Ui_ScreenSS(object):
     # ==== リレー起動 ====
     def start_relay(self):
         target_ip = '{}'.format(self.check_text_format(self.target_ip.text()))
-        self.ffmpeg_relay = multiprocessing.Process(target=_ffmpeg_relay, daemon=True, args=(target_ip))
+        self.ffmpeg_relay = multiprocessing.Process(target=_ffmpeg_relay, daemon=True, args=(target_ip, ))
         self.ffmpeg_relay.start()
 
     # ==== リレー自動再起動 ====
