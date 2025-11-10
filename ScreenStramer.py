@@ -1,9 +1,16 @@
 import multiprocessing
 import os
+import platform
+import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import time
+import urllib.request
+import zipfile
+from io import BytesIO
+
 import numpy as np
 import psutil
 import soundcard as sc
@@ -14,11 +21,58 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QMai
 running = [True]
 ffmpeg_proc = [None]
 
+def load_ffmpeg():
+    if not os.path.exists(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin')) or not os.path.exists(os.path.join("/opt", "homebrew", "bin", "ffmepg")):
+        if platform.system() == 'Windows':
+            os.makedirs(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'), exist_ok=True)
+            back_path = os.getcwd()
+            os.chdir(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'))
+            win_ffmpeg = urllib.request.urlopen(urllib.request.Request('https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip', headers={'User-Agent': 'Mozilla/5.0 (Linux; U; Android 8.0; en-la; Nexus Build/JPG991) AppleWebKit/511.2 (KHTML, like Gecko) Version/5.0 Mobile/11S444 YJApp-ANDROID jp.co.yahoo.android.yjtop/4.01.1.5'})).read()
+            with zipfile.ZipFile(BytesIO(win_ffmpeg)) as ffmpegzip:
+                ffmpegzip.extractall(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp') + '/.')
+            shutil.move(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp', 'ffmpeg-master-latest-win64-gpl', 'bin'),
+                        os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin'))
+            os.chdir(back_path)
+            shutil.rmtree(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'))
+            return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg.exe')
+        if platform.system() == 'Linux':
+            os.makedirs(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'), exist_ok=True)
+            back_path = os.getcwd()
+            os.chdir(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'))
+            linux_ffmpeg = urllib.request.urlopen(urllib.request.Request('https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz', headers={'User-Agent': 'Mozilla/5.0 (Linux; U; Android 8.0; en-la; Nexus Build/JPG991) AppleWebKit/511.2 (KHTML, like Gecko) Version/5.0 Mobile/11S444 YJApp-ANDROID jp.co.yahoo.android.yjtop/4.01.1.5'})).read()
+            with open('tmp.tar.xz', 'wb') as f:
+                f.write(linux_ffmpeg)
+            os.remove('tmp.tar.xz')
+            with tarfile.open('tmp.tar.xz', 'r:xz') as ffmpegzip:
+                ffmpegzip.extractall(path=os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp') + '/.')
+            shutil.move(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp', 'ffmpeg-master-latest-linux64-gpl', 'bin'), os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin'))
+            os.chdir(back_path)
+            shutil.rmtree(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'))
+            os.chmod(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg'), 0o755)
+            return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
+        if platform.system() == 'Darwin':
+            if not platform.machine() == 'arm64':
+                os.makedirs(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin'), exist_ok=True)
+                darwin_ffmpeg = urllib.request.urlopen(urllib.request.Request('https://evermeet.cx/ffmpeg/ffmpeg-5.1.2.zip', headers={'User-Agent': 'Mozilla/5.0 (Linux; U; Android 8.0; en-la; Nexus Build/JPG991) AppleWebKit/511.2 (KHTML, like Gecko) Version/5.0 Mobile/11S444 YJApp-ANDROID jp.co.yahoo.android.yjtop/4.01.1.5'})).read()
+                with zipfile.ZipFile(BytesIO(darwin_ffmpeg)) as ffmpegzip:
+                    ffmpegzip.extractall(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin') + '/.')
+                os.chmod(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg'), 0o755)
+                return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
+            else:
+                subprocess.run(["brew", "install", "ffmpeg"], shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if os.path.exists(os.path.join("/opt", "homebrew", "bin", "ffmepg")):
+                    return os.path.join("/opt", "homebrew", "bin", "ffmepg")
+    else:
+        if os.path.exists(os.path.join("/opt", "homebrew", "bin", "ffmepg")):
+            return os.path.join("/opt", "homebrew", "bin", "ffmepg")
+        else:
+            return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
 
 def run_ffmpeg(target_ip):
+    ffmepg_bin = load_ffmpeg()
     """FFmpegプロセスを起動"""
     proc = subprocess.Popen([
-        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "{}".format(ffmepg_bin), "-hide_banner", "-loglevel", "error",
         "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
         "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",
         "-framerate", "60", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -83,8 +137,10 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(QPixmap(QSize(96, 96)).fromImage(QImage(icon_path))))
 
     def closeEvent(self, event):
-        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if platform.system() == "Windows":
+            subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run('killall -9 ffmpeg', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 class Ui_ScreenSS(object):
@@ -149,7 +205,10 @@ class Ui_ScreenSS(object):
     def stop_stream(self):
         running[0] = False
         self.ffmpeg = None
-        subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if platform.system() == "Windows":
+            subprocess.run('taskkill /f /im ffmpeg.exe', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run('killall -9 ffmpeg', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.start_btn.setText("▶ 開始")
 
 
