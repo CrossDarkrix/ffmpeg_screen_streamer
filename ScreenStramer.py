@@ -22,7 +22,7 @@ running = [True]
 ffmpeg_proc = [None]
 
 def load_ffmpeg():
-    if not os.path.exists(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin')) or not os.path.exists(os.path.join("/opt", "homebrew", "bin", "ffmepg")):
+    if not os.path.exists(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin')):
         if platform.system() == 'Windows':
             os.makedirs(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'), exist_ok=True)
             back_path = os.getcwd()
@@ -50,26 +50,17 @@ def load_ffmpeg():
             shutil.rmtree(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'tmp'))
             os.chmod(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg'), 0o755)
             return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
-        if platform.system() == 'Darwin':
-            if not platform.machine() == 'arm64':
-                os.makedirs(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin'), exist_ok=True)
-                darwin_ffmpeg = urllib.request.urlopen(urllib.request.Request('https://evermeet.cx/ffmpeg/ffmpeg-5.1.2.zip', headers={'User-Agent': 'Mozilla/5.0 (Linux; U; Android 8.0; en-la; Nexus Build/JPG991) AppleWebKit/511.2 (KHTML, like Gecko) Version/5.0 Mobile/11S444 YJApp-ANDROID jp.co.yahoo.android.yjtop/4.01.1.5'})).read()
-                with zipfile.ZipFile(BytesIO(darwin_ffmpeg)) as ffmpegzip:
-                    ffmpegzip.extractall(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin') + '/.')
-                os.chmod(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg'), 0o755)
-                return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
-            else:
-                subprocess.run(["brew", "install", "ffmpeg"], shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(os.path.join("/opt", "homebrew", "bin", "ffmepg")):
-                    return os.path.join("/opt", "homebrew", "bin", "ffmepg")
     else:
-        if os.path.exists(os.path.join("/opt", "homebrew", "bin", "ffmepg")):
-            return os.path.join("/opt", "homebrew", "bin", "ffmepg")
+        if os.path.exists(os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg.exe')):
+            return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg.exe')
+        elif os.path.exists(os.path.join("/", "opt", "homebrew", "bin", "ffmpeg")):
+            return os.path.join("/", "opt", "homebrew", "bin", "ffmpeg")
         else:
             return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
 
 def run_ffmpeg(target_ip):
     ffmepg_bin = load_ffmpeg()
+    print(ffmepg_bin)
     """FFmpegプロセスを起動"""
     proc = subprocess.Popen([
         "{}".format(ffmepg_bin), "-hide_banner", "-loglevel", "error",
@@ -79,7 +70,7 @@ def run_ffmpeg(target_ip):
         "-vf", "scale=1920:1080:flags=lanczos,hqdn3d=1.5:1.5:6:6",
         "-af", "afftdn=nf=-25",
         "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
-    ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    ], stdin=subprocess.PIPE,  shell=True)
     print(f"[FFmpeg] 起動: {target_ip}")
     return proc
 
