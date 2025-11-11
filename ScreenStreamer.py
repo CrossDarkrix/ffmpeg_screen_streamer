@@ -68,7 +68,7 @@ def run_ffmpeg(target_ip):
         "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",
         "-framerate", "60", "-preset", "ultrafast", "-tune", "zerolatency",
         "-vf", "scale=1920:1080:flags=lanczos,hqdn3d=1.5:1.5:6:6",
-        "-af", "afftdn=nf=-25",
+        "-af", "afftdn=nf=-25", "-crf", "15",
         "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
     ], stdin=subprocess.PIPE,  shell=True)
     print(f"[FFmpeg] 起動: {target_ip}")
@@ -164,7 +164,7 @@ class Ui_ScreenSS(object):
         QMetaObject.connectSlotsByName(ScreenSS)
 
     def retranslateUi(self, ScreenSS):
-        ScreenSS.setWindowTitle("Screen Streamer (UDP LocalIP + Auto Restart)")
+        ScreenSS.setWindowTitle("Screen Streamer")
         self.title.setText("Screen Streamer")
         self.target_label.setText("対象IP")
         self.start_btn.setText("▶ 開始")
