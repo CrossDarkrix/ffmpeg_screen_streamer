@@ -1,4 +1,3 @@
-import multiprocessing
 import os
 import platform
 import shutil
@@ -59,19 +58,43 @@ def load_ffmpeg():
             return os.path.join(os.path.expanduser('~'), 'ffmpeg_bin', 'bin', 'ffmpeg')
 
 def run_ffmpeg(target_ip):
-    ffmepg_bin = load_ffmpeg()
-    print(ffmepg_bin)
-    """FFmpegプロセスを起動"""
-    proc = subprocess.Popen([
-        "{}".format(ffmepg_bin), "-hide_banner", "-loglevel", "error",
+    ffmpeg_bin = load_ffmpeg()
+
+    # UDP高画質設定（1080p60・10Mbps・低遅延）
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner", "-loglevel", "error",
+
+        # 画面キャプチャ
+        "-f", "gdigrab",
+        "-framerate", "60",
+        "-video_size", "1920x1080",
+        "-i", "desktop",
+
+        # 音声入力（stdinから）
         "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
-        "-f", "gdigrab", "-video_size", "1920x1080", "-i", "desktop",
-        "-framerate", "60", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-vf", "scale=1920:1080:flags=lanczos,hqdn3d=1.5:1.5:6:6",
-        "-af", "afftdn=nf=-25", "-crf", "15",
+
+        # エンコード設定
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-tune", "zerolatency",
+        "-b:v", "10M",
+        "-maxrate", "10M",
+        "-bufsize", "20M",
+        "-pix_fmt", "yuv420p",
+        "-profile:v", "high",
+        "-vf", "hqdn3d=1.5:1.5:6:6,scale=1920:1080:flags=lanczos",
+
+        # 音声設定
+        "-c:a", "aac",
+        "-b:a", "192k",
+
+        # 出力（UDP）
         "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
-    ], stdin=subprocess.PIPE,  shell=True)
-    print(f"[FFmpeg] 起動: {target_ip}")
+    ]
+
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, shell=True)
+    print(f"[FFmpeg] 起動中 → UDP送信先: {target_ip}:1889")
     return proc
 
 
@@ -217,5 +240,4 @@ def main():
 
 
 if __name__ == '__main__':
-    multiprocessing.freeze_support()
     main()
