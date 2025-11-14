@@ -82,7 +82,6 @@ def run_ffmpeg(target_ip):
         "-maxrate", "15M",
         "-bufsize", "30M",
         "-g", "120",
-        "-keyint_min", "60",
         "-pix_fmt", "yuv420p",
         "-profile:v", "high",
         "-vf", "hqdn3d=1.2:1.2:5:5,scale=1920:1080:flags=lanczos",
