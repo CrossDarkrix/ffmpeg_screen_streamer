@@ -76,11 +76,13 @@ def run_ffmpeg(target_ip):
 
         # エンコード設定
         "-c:v", "libx264",
-        "-preset", "veryfast",
+        "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-b:v", "10M",
-        "-maxrate", "10M",
-        "-bufsize", "20M",
+        "-b:v", "15M",
+        "-maxrate", "15M",
+        "-bufsize", "30M",
+        "-g", "120",
+        "-keyint_min", "60",
         "-pix_fmt", "yuv420p",
         "-profile:v", "high",
         "-vf", "hqdn3d=1.5:1.5:6:6,scale=1920:1080:flags=lanczos",
@@ -90,7 +92,7 @@ def run_ffmpeg(target_ip):
         "-b:a", "192k",
 
         # 出力（UDP）
-        "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
+        "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=2632"
     ]
 
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, shell=True)
