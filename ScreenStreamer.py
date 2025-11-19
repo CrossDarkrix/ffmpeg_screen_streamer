@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import platform
 import shutil
@@ -78,9 +79,9 @@ def run_ffmpeg(target_ip):
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-b:v", "15M",
-        "-maxrate", "15M",
-        "-bufsize", "30M",
+        "-b:v", "78M",
+        "-maxrate", "78M",
+        "-bufsize", "150M",
         "-g", "120",
         "-pix_fmt", "yuv420p",
         "-profile:v", "high",
@@ -88,7 +89,7 @@ def run_ffmpeg(target_ip):
 
         # 音声設定
         "-c:a", "aac",
-        "-b:a", "192k",
+        "-b:a", "320k",
 
         # 出力（UDP）
         "-f", "mpegts", f"udp://{target_ip}:1889?pkt_size=1316"
@@ -241,4 +242,5 @@ def main():
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     main()
